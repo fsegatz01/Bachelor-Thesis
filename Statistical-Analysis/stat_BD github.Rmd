@@ -1,0 +1,182 @@
+---
+title: "BD_statistical_analysis"
+output:
+  pdf_document: default
+  html_document: default
+  word_document: default
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# --- Import the Packages ---
+
+library(lme4)
+library(lmerTest)
+library(rmarkdown)
+library(ggplot2)
+library(sjPlot)
+library(ggeffects)
+library(effectsize)
+library(car)
+
+```
+
+```{r}
+
+# --- Functions ---
+
+# function to create a residual plot for a model
+plot_residuals <- function(model, data, dependent_var, model_name) {
+  df_res <- data.frame(
+    Actual = data[[dependent_var]],       
+    Fitted = fitted(model),              
+    Residuals = resid(model),            
+    Std_Residuals = residuals(model, type = "pearson") 
+  )
+  
+
+  ggplot(df_res, aes(x = Fitted, y = Std_Residuals)) +
+    geom_point(alpha = 0.5, color = "darkgreen") +
+    geom_hline(yintercept = 0, linetype = "dashed") +
+    labs(title = "Standardized Residuals vs Predicted Values for the LMM",
+         subtitle = sprintf("%s", model_name),
+         x = "Predicted values",
+         y = "Standardized Residuals") +
+    theme_minimal() +
+    theme(plot.subtitle = element_text(color = "grey35"))
+    
+}
+
+```
+
+```{r}
+
+# --- Import the Behavioural Data ---
+
+behavioural_data <- read.csv("C:/Users/FABI/Documents/Osnabrück - Cognitive Science/Bachelor/Analysis/Data/preprocessed Data/BehaviouralData_T1.csv")
+
+
+# --- Prepare the Data for Statistical Analysis ---
+
+# 1. remove trials containing Na
+
+behavioural_data <- na.omit(behavioural_data)
+
+# 2. set variables to correct data types
+
+# factors
+behavioural_data$valence <- factor(behavioural_data$valence)
+behavioural_data$condition <- factor(behavioural_data$condition)
+behavioural_data$participant_id <- factor(behavioural_data$participant_id)
+behavioural_data$picture_id <- factor(behavioural_data$picture_id)
+
+# numeric
+behavioural_data$arousal <- as.numeric(behavioural_data$arousal)
+
+# adjust the order of levels
+behavioural_data$valence <- factor(behavioural_data$valence, levels = c("positive", "negative"))
+behavioural_data$condition <- factor(behavioural_data$condition, levels = c("incongruent", "congruent"))
+
+# 3. for Valence and Condition introduce Effect Coding
+
+contrasts(behavioural_data$valence) <- contr.sum(levels(behavioural_data$valence))
+contrasts(behavioural_data$condition) <- contr.sum(levels(behavioural_data$condition))
+
+```
+
+```{r}
+# --- Create a QQ-Plot ---
+
+# QQ-plots to check the normality of the behavioural data
+qqnorm(behavioural_data$log.transformed.rt, main = "QQ-Plot of logRT for Behavioural Reaction Times")
+qqline(behavioural_data$log.transformed.rt)
+
+```
+
+```{r}
+
+# --- Statistical Analysis ---
+
+# apply the LMM on the behavioural data
+model_BD <- lmer(log.transformed.rt ~ valence * arousal + condition + 
+               (1 | participant_id), 
+            data = behavioural_data, REML = TRUE)
+
+# print the model summary 
+summary(model_BD)
+
+# plot the model residuals
+plot_residuals(model_BD, data = behavioural_data, dependent_var = "log.transformed.rt", "BD logRT ~ Valence * Arousal + Condition + (1|participant)")
+
+```
+
+```{r}
+
+# --- Interpretation of the Coefficients ---
+
+# get the coefficients
+betas <- summary(model_BD)$coefficients[, 1]
+
+# converting coefficients into interpretable reaction time information 
+cat(paste("Comparison Valence: ", 10^(2*betas["valence1"]), "Percent: ", ((1-(10^(2*betas["valence1"])))*100)*(-1), "%", " \n"))
+cat(paste("Comparison Condition: ", 10^(2*betas["condition1"]), "Percent: ", ((1-(10^(2*betas["condition1"])))*100)*(-1), "%", " \n"))
+
+```
+
+```{r}
+
+# --- Interpretation of the Interaction ---
+
+# get model prediction for the interaction
+pred_interaction_bd <- ggpredict(model_BD, terms = c("arousal", "valence"))
+
+
+# plotting the interaction effects
+bd_interaction_plot <- plot(pred_interaction_bd, show_ci = FALSE) +
+  geom_line(aes(color = group)) +
+  scale_color_manual(values = c("positive" = "green", "negative" = "red"), 
+                     name = "Valence") +
+  labs(title = ' ', x = "Arousal", y = "Predicted logRT") +
+  theme_minimal() +
+   theme(
+    axis.title = element_text(size = 14),
+    axis.text = element_text(size = 12),
+    legend.title = element_text(size = 14),
+    legend.text = element_text(size = 12)
+  )
+
+print(bd_interaction_plot)
+
+
+# turn model predictions of the interaction into a data frame
+interaction_effect_df <- as.data.frame(pred_interaction_bd)
+
+# split up the predicitons for positive and negative Valence
+positive_valence <- subset(interaction_effect_df, group == "positive")
+negative_valence <- subset(interaction_effect_df, group == "negative")
+
+# check how much the line increases / decreases for one Arousal unit
+positive_slope <- diff(c(positive_valence$predicted[positive_valence$x == 2], positive_valence$predicted[positive_valence$x == 3]))
+
+negative_slope <- diff(c(negative_valence$predicted[negative_valence$x == 2], negative_valence$predicted[negative_valence$x == 3]))
+
+
+# print the slopes and their translation into reaction times
+cat(paste("\n Interaction Slopes:\n", "  positive Valence: ", positive_slope, "\n   negative Valence: ", negative_slope))
+cat(paste("\n Translation into RTs:\n", "  positive Valence: ", format(10^positive_slope, digits = 8), "\n   negative Valence: ", format( 10^negative_slope, digits = 8)))
+
+```
+
+```{r}
+
+# calculation of the effect sizes using partial eta squared
+eta_squared(model_BD, partial = TRUE, ci=0.95, alternative = "two.sided")
+
+```
+
+
+
+
+
